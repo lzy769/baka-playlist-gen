@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+# 用户数据/生成产物不入库
+output/
+data/
+*.tmp

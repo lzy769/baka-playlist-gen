@@ -1,0 +1,35 @@
+{
+  "name": "baka-playlist-gen",
+  "version": "1.0.0",
+  "description": "把任意 Excel / CSV 歌曲列表转换成 BakaMusic 语言分组歌单插件的命令行工具",
+  "keywords": [
+    "bakamusic",
+    "playlist",
+    "music",
+    "song",
+    "excel",
+    "csv",
+    "plugin"
+  ],
+  "license": "MIT",
+  "main": "src/cli.mjs",
+  "bin": {
+    "baka-playlist-gen": "src/cli.mjs"
+  },
+  "files": [
+    "src",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/cli.mjs",
+    "example": "node src/cli.mjs examples/example-songlist.csv --out dist",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
