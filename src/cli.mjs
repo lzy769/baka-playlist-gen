@@ -19,7 +19,7 @@
  *   --help / -h            显示帮助
  */
 
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { parseSongList } from "./excel-parser.mjs";
 import { matchSongs } from "./matcher.mjs";
@@ -27,7 +27,7 @@ import { groupByLanguage, LANGS } from "./language-detect.mjs";
 import { generatePlugins } from "./plugin-gen.mjs";
 
 function parseArgs(argv) {
-  const args = { input: null, langs: null, out: "dist", concurrency: 3, interval: 120, justGroup: false, sheetPrefix: null };
+  const args = { input: null, langs: null, out: "dist", concurrency: 3, interval: 120, justGroup: false, sheetPrefix: null, resume: null, saveState: null, delimiter: null, startRow: 0, noHeader: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--help" || a === "-h") { args.help = true; continue; }
@@ -37,6 +37,11 @@ function parseArgs(argv) {
     if (a === "--concurrency") { args.concurrency = parseInt(argv[i + 1], 10) || 3; i += 1; continue; }
     if (a === "--interval") { args.interval = parseInt(argv[i + 1], 10) || 120; i += 1; continue; }
     if (a === "--sheet-prefix") { args.sheetPrefix = argv[i + 1]; i += 1; continue; }
+    if (a === "--resume") { args.resume = argv[i + 1]; i += 1; continue; }
+    if (a === "--save-state") { args.saveState = argv[i + 1]; i += 1; continue; }
+    if (a === "--delimiter") { args.delimiter = argv[i + 1]; i += 1; continue; }
+    if (a === "--start-row") { args.startRow = parseInt(argv[i + 1], 10) || 0; i += 1; continue; }
+    if (a === "--no-header") { args.noHeader = true; continue; }
     if (!a.startsWith("-") && !args.input) args.input = a;
   }
   return args;
@@ -53,6 +58,12 @@ function printHelp() {
   --out <dir>           输出目录(默认 ./dist)
   --concurrency <n>     QQ匹配并发(默认 3)
   --interval <ms>       匹配间隔毫秒(默认 120)
+  --sheet-prefix <s>    歌单标题前缀
+  --resume <state.json> 从上次保存的匹配状态断点续跑
+  --save-state <file>   把匹配状态保存到 JSON(配合 --resume)
+  --delimiter <c>       CSV 分隔符(默认自动: 制表符>逗号)
+  --start-row <n>       从第 n 行开始解析(0-based)
+  --no-header           不自动跳过表头行
   --just-group          仅语言分组(不联网)
   -h, --help            帮助
 `);
@@ -66,7 +77,11 @@ async function main() {
   }
 
   console.log(`📖 读取: ${args.input}`);
-  const songs = await parseSongList(args.input);
+  const songs = await parseSongList(args.input, {
+    delimiter: args.delimiter || undefined,
+    startRow: args.startRow || 0,
+    noHeader: args.noHeader,
+  });
   console.log(`   ✓ 解析到 ${songs.length} 首歌曲`);
 
   // 1) 匹配 mid (除非 --just-group)
@@ -74,10 +89,23 @@ async function main() {
   if (args.justGroup) {
     matched = songs.map((s) => ({ title: s.title, artist: s.artist, mid: null, verified: false }));
   } else {
+    // 断点续跑：读取上次保存的匹配状态
+    let preResult = [];
+    if (args.resume) {
+      try {
+        const state = JSON.parse(readFileSync(args.resume, "utf-8"));
+        if (Array.isArray(state.results)) preResult = state.results;
+        console.log(`📦 从 ${args.resume} 恢复 ${preResult.filter((r) => r && r.verified).length} 条已匹配`);
+      } catch (e) {
+        console.warn(`⚠️ 无法读取断点文件 ${args.resume}: ${e.message}，将从头匹配`);
+        preResult = [];
+      }
+    }
     console.log(`🔍 匹配 QQ mid（并发 ${args.concurrency}，间隔 ${args.interval}ms）...`);
     matched = await matchSongs(songs, {
       concurrency: args.concurrency,
       intervalMs: args.interval,
+      preResult,
       onProgress: ({ done, total, verified }) => {
         process.stdout.write(`\r   进度 ${done}/${total}，已匹配 ${verified}`);
       },
@@ -85,6 +113,11 @@ async function main() {
     process.stdout.write("\n");
     const ok = matched.filter((m) => m.verified).length;
     console.log(`   ✓ 匹配成功 ${ok}/${matched.length}`);
+    // 保存状态供断点续跑
+    if (args.saveState) {
+      writeFileSync(args.saveState, JSON.stringify({ input: args.input, results: matched, ts: Date.now() }, null, 2), "utf-8");
+      console.log(`   💾 匹配状态已保存到 ${args.saveState}`);
+    }
   }
 
   // 2) 语言分组
@@ -96,6 +129,17 @@ async function main() {
 
   for (const [lang, list] of Object.entries(groups)) {
     if (list && list.length) console.log(` 🗂  ${lang}: ${list.length} 首`);
+  }
+
+  // 2.5) 未匹配报告（仅非 --just-group 且实际匹配过时）
+  if (!args.justGroup) {
+    const unmatched = matched.filter((m) => !m.verified);
+    if (unmatched.length) {
+      const report = unmatched.map((m) => `${m.title}\t${m.artist}`).join("\n");
+      mkdirSync(args.out, { recursive: true });
+      writeFileSync(path.join(args.out, "unmatched.txt"), report, "utf-8");
+      console.log(` ⚠️  未匹配 ${unmatched.length} 首，已写入 ${path.join(args.out, "unmatched.txt")}`);
+    }
   }
 
   // 3) 生成插件

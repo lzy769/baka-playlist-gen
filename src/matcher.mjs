@@ -194,19 +194,27 @@ export async function matchSong(song, opts = {}) {
 export async function matchSongs(songs, opts = {}) {
   const concurrency = opts.concurrency ?? 3;
   const intervalMs = opts.intervalMs ?? 120;
+  // 断点续跑：preResult 可提供已完成的匹配（按索引），跳过它们
+  const preResult = opts.preResult ?? [];
   const results = new Array(songs.length);
   let cursor = 0;
   let verified = 0;
+
+  // 初始化已有结果
+  for (let i = 0; i < songs.length; i += 1) {
+    if (preResult[i]) { results[i] = preResult[i]; if (preResult[i].verified) verified += 1; }
+  }
 
   const worker = async () => {
     while (cursor < songs.length) {
       const idx = cursor;
       cursor += 1;
+      if (results[idx]) continue; // 已匹配过，跳过
       const r = await matchSong(songs[idx], { intervalMs });
       results[idx] = { title: songs[idx].title, artist: songs[idx].artist, ...r };
       if (r.verified) verified += 1;
       if (opts.onProgress && ((idx + 1) % 20 === 0 || idx === songs.length - 1)) {
-        opts.onProgress({ done: idx + 1, total: songs.length, verified });
+        opts.onProgress({ done: results.filter(Boolean).length, total: songs.length, verified });
       }
     }
   };

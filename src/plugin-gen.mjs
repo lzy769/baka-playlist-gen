@@ -58,20 +58,34 @@ const axios = axiosModule.default || axiosModule;
 /** 内嵌歌曲数据（mid ↔ 歌名/歌手已严格校验） */
 const SONGS = ${songsJson};
 
-/** QQ 播放解析接口：mid -> 真实播放 URL */
-const QQ_FIELDS = { "128k": "song_play_url_standard", "320k": "song_play_url_hq", "flac": "song_play_url_sq" };
-
-async function requestMusicUrl(songMid, quality) {
-  const field = QQ_FIELDS[quality] || QQ_FIELDS["128k"];
-  const response = await axios.get("https://tang.api.s01s.cn/music_open_api.php", {
-    params: { mid: String(songMid) }, timeout: 10000,
-  });
-  const body = response.data;
-  let url = body && body[field];
-  if (typeof url === "string" && /^https?:\\/\\/\\S+$/i.test(url.trim())) {
-    return { code: 200, url: url.trim() };
+/** 播放解析（多源按序回退，见 src/player-provider.mjs 的设计） */
+async function resolvePlayerSource(songMid, quality) {
+  const FIELDS = { "128k": "song_play_url_standard", "320k": "song_play_url_hq", "flac": "song_play_url_sq" };
+  const mid = String(songMid || "");
+  if (!mid) return null;
+  // 可扩展：在这里追加更多 provider（按序回退）。默认用 QQ 聚合源。
+  const providers = [
+    async () => {
+      const field = FIELDS[quality] || FIELDS["128k"];
+      const res = await axios.get("https://tang.api.s01s.cn/music_open_api.php", { params: { mid }, timeout: 10000 });
+      const json = res.data;
+      let u = json && json[field];
+      if (typeof u !== "string" || !/^https?:\\/\\/\\S+$/i.test(u.trim())) {
+        for (const q of ["128k", "320k", "flac"]) {
+          const v = json && json[FIELDS[q]];
+          if (typeof v === "string" && /^https?:\\/\\//i.test(v.trim())) { u = v.trim(); break; }
+        }
+      }
+      return u && u.trim().startsWith("http") ? { url: u.trim() } : null;
+    },
+  ];
+  for (const p of providers) {
+    try {
+      const r = await p();
+      if (r && r.url) return r;
+    } catch (_) { /* 单个源失败，继续下一个 */ }
   }
-  throw new Error("QQ: 未返回播放链接");
+  return null;
 }
 
 function toMediaItem(song) {
@@ -122,8 +136,8 @@ module.exports = {
   async getMediaSource(musicItem, quality) {
     const mid = musicItem.mid || musicItem.songmid || musicItem.id;
     if (!mid) throw new Error("缺少歌曲 ID");
-    const res = await requestMusicUrl(mid, quality || "128k");
-    if (res.code === 200 && res.url) { const r = { url: res.url }; if (res.quality) r.quality = res.quality; return r; }
+    const res = await resolvePlayerSource(mid, quality || "128k");
+    if (res && res.url) { const r = { url: res.url }; if (res.quality) r.quality = res.quality; return r; }
     return null;
   },
 

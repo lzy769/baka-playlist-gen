@@ -32,15 +32,17 @@ export function decode(buffer) {
   }
 }
 
-/** 解析 CSV 文本（支持逗号 / 制表符，按行拆分，跳过空行）。 */
-export function parseCsv(text) {
+/** 解析 CSV 文本（支持逗号 / 制表符 / 自定义分隔符，按行拆分，跳过空行）。 */
+export function parseCsv(text, { delimiter, startRow = 0 } = {}) {
   const lines = text.split(/\r?\n/);
   const rows = [];
-  for (const line of lines) {
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    if (idx < startRow) continue;
+    const line = lines[idx];
     const trimmed = line.trim();
     if (!trimmed) continue;
-    // 简单 CSV：按分隔符拆分第一/第二个字段
-    const sep = trimmed.includes("\t") ? "\t" : ",";
+    // 分隔符：显式指定 > 自动检测(制表符优先) > 逗号
+    const sep = delimiter || (trimmed.includes("\t") ? "\t" : ",");
     const parts = trimmed.split(sep);
     const title = (parts[0] || "").replace(/^"|"$/g, "").trim();
     const artist = (parts[1] || "").replace(/^"|"$/g, "").trim();
@@ -59,9 +61,10 @@ export function stripHeader(rows) {
 /**
  * 从文件路径读取歌曲列表。
  * @param {string} filePath .csv 或 .xlsx 路径
+ * @param {object} [opts] { delimiter, startRow, noHeader }
  * @returns {Promise<Array<{title:string, artist:string}>>}
  */
-export async function parseSongList(filePath) {
+export async function parseSongList(filePath, opts = {}) {
   const lower = filePath.toLowerCase();
   if (lower.endsWith(".xlsx")) {
     return await parseXlsx(filePath);
@@ -69,8 +72,9 @@ export async function parseSongList(filePath) {
   // 默认按 CSV/文本处理
   const buffer = await readFile(filePath);
   const text = decode(buffer);
-  const rows = parseCsv(text);
-  return stripHeader(rows.filter((r) => r.title && r.artist !== undefined));
+  let rows = parseCsv(text, { delimiter: opts.delimiter, startRow: opts.startRow || 0 });
+  if (!opts.noHeader) rows = stripHeader(rows);
+  return rows.filter((r) => r.title && r.artist !== undefined);
 }
 
 /** 解析 XLSX（优先用 xlsx 包，缺则抛错提示转 CSV）。 */

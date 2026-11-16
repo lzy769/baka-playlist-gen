@@ -1,5 +1,10 @@
 # 🎵 baka-playlist-gen
 
+![GitHub release](https://img.shields.io/github/v/release/lzy769/baka-playlist-gen?label=release)
+![License](https://img.shields.io/github/license/lzy769/baka-playlist-gen)
+![Node](https://img.shields.io/badge/node-%3E%3D18-339933)
+![GitHub stars](https://img.shields.io/github/stars/lzy769/baka-playlist-gen?style=social)
+
 把任意 **Excel / CSV 歌曲列表** 一键转换成 **BakaMusic 语言分组歌单插件** 的命令行工具。
 
 > 你有一张几百上千首的歌单（`.xlsx` / `.csv`），想直接在 [BakaMusic](https://github.com/Zencok/BakaMusic) 里按「中文 / 日文 / 英文」分类点开就播？这个工具帮你完成：解析列表 → 匹配歌曲 → 语言分组 → 生成插件 → 复制进 BakaMusic。
@@ -11,6 +16,9 @@
 - **输入灵活**：支持 `.csv`（零依赖）与 `.xlsx`
 - **自动语言分组**：中文 / 日文 / 英文 / 韩文 / 其他，可通过 `--langs` 自定义启用
 - **严格歌曲匹配**：搜索 QQ 音乐并**二次校验 mid 对应的真实歌名/歌手**，杜绝「歌名和歌曲不对版」
+- **多源播放回退**：生成的插件播放走**多源按序回退**（单个解析源失效自动换源），更稳
+- **可断点续跑**：大批量匹配中断后，用 `--resume` 从上次进度继续
+- **未匹配报告**：匹配不上的歌会输出 `unmatched.txt`，方便手动补齐
 - **完整插件生成**：每个语言生成一个 BakaMusic 插件，放进插件目录即可在「推荐歌单」里点开播放
 - **可并发 / 可调速**：`--concurrency` / `--interval` 控制匹配速度，避免限流
 - **零运行时依赖**：核心逻辑只用 Node 内置模块（读 `.xlsx` 需可选装 `xlsx` 包，或用 CSV）
@@ -76,6 +84,11 @@ node src/cli.mjs <input.csv|xlsx> [options]
   --concurrency <n>  QQ 匹配并发数，默认 3（调高更快，但易触发限流）
   --interval <ms>    每次匹配间隔毫秒，默认 120
   --sheet-prefix <s> 歌单标题前缀
+  --resume <f>       从上次保存的匹配状态断点续跑
+  --save-state <f>   把匹配状态保存到 JSON（配合 --resume）
+  --delimiter <c>    指定 CSV 分隔符（默认自动：制表符 > 逗号）
+  --start-row <n>    从第 n 行开始解析（0-based）
+  --no-header        不自动跳过表头行
   --just-group       仅语言分组（不联网匹配）
   -h, --help         帮助
 ```
@@ -91,6 +104,13 @@ node src/cli.mjs "我的歌单.xlsx" --out mydist
 
 # 仅做语言分组，不匹配 mid
 node src/cli.mjs list.csv --just-group
+
+# 断点续跑：先存状态，中断后从上次进度继续
+node src/cli.mjs list.csv --save-state state.json
+node src/cli.mjs list.csv --resume state.json
+
+# 自定义 CSV：制表符分隔、从第 3 行开始
+node src/cli.mjs list.tsv --delimiter "	" --start-row 2
 ```
 
 ## 🔧 工作原理
@@ -108,12 +128,14 @@ node src/cli.mjs list.csv --just-group
 
 ```
 baka-playlist-gen/
+├── .github/workflows/ci.yml  # CI 自动测试
 ├── src/
-│   ├── cli.js             # 命令行入口
-│   ├── excel-parser.js    # CSV / XLSX 解析
-│   ├── matcher.js         # QQ 搜索 + mid 严格校验
-│   ├── language-detect.js # 语言分组（可配置）
-│   └── plugin-gen.js      # BakaMusic 插件生成
+│   ├── cli.mjs             # 命令行入口
+│   ├── excel-parser.mjs    # CSV / XLSX 解析
+│   ├── matcher.mjs         # QQ 搜索 + mid 严格校验
+│   ├── language-detect.mjs # 语言分组（可配置）
+│   ├── player-provider.mjs # 播放多源回退（设计参考）
+│   └── plugin-gen.mjs      # BakaMusic 插件生成
 ├── templates/             # 插件模板说明
 ├── examples/              # 示例歌单
 ├── docs/
