@@ -52,3 +52,14 @@ test("groupByLanguage: --langs 只启用指定分组", () => {
   assert.equal(g["英文"].length, 1);
   assert.equal(g["日文"], undefined);
 });
+
+test("groupByLanguage: 相同 mid 去重", () => {
+  const songs = [
+    { title: "Numb", artist: "Linkin Park", mid: "aaa" },
+    { title: "Numb", artist: "Linkin Park", mid: "aaa" }, // 重复 mid
+    { title: "晴天", artist: "周杰伦", mid: "bbb" },
+  ];
+  const g = groupByLanguage(songs);
+  assert.equal(g["英文"].length, 1); // Numb 只保留一条
+  assert.equal(g["中文"].length, 1);
+});

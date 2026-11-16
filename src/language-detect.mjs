@@ -74,8 +74,15 @@ export const LANGS = ["中文", "日文", "英文", "韩文", "其他"];
 export function groupByLanguage(songs, enabledLangs) {
   const enabled = new Set(enabledLangs && enabledLangs.length ? enabledLangs : LANGS);
   const groups = {};
+  const seenMid = new Set();
   for (const lang of LANGS) groups[lang] = [];
   for (const song of songs || []) {
+    // 按 mid 去重：同一首歌只保留首次出现，避免歌单内重复
+    if (song && song.mid) {
+      const key = String(song.mid);
+      if (seenMid.has(key)) continue;
+      seenMid.add(key);
+    }
     const lang = detectLanguage(song.title, song.artist);
     if (enabled.has(lang)) groups[lang].push(song);
   }
