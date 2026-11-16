@@ -1,6 +1,6 @@
 {
   "name": "baka-playlist-gen",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "把任意 Excel / CSV 歌曲列表转换成 BakaMusic 语言分组歌单插件的命令行工具",
   "keywords": [
     "bakamusic",
@@ -12,6 +12,11 @@
     "plugin"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lzy769/baka-playlist-gen.git"
+  },
+  "homepage": "https://github.com/lzy769/baka-playlist-gen#readme",
   "main": "src/cli.mjs",
   "bin": {
     "baka-playlist-gen": "src/cli.mjs"
@@ -19,6 +24,8 @@
   "files": [
     "src",
     "templates",
+    "examples",
+    "docs",
     "README.md",
     "LICENSE"
   ],
