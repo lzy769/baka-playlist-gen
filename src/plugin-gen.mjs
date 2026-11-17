@@ -141,8 +141,48 @@ module.exports = {
     return null;
   },
 
+  // 播放时按 mid 从 QQ 拉取真实信息（歌名/歌手/专辑/封面 artwork）
   async getMusicInfo(musicBase) {
-    return { ...musicBase, platform: ${JSON.stringify(platform)} };
+    const base = { ...musicBase, platform: ${JSON.stringify(platform)} };
+    const mid = musicBase.mid || musicBase.songmid || musicBase.id;
+    // 已有封面就直接返回
+    if (!mid || (base.artwork && base.title)) return base;
+    const track = await fetchTrackByMid(mid);
+    if (!track) return base;
+    return {
+      ...base,
+      id: mid, mid, songmid: mid,
+      title: track.name || base.title,
+      artist: track.singer ? (Array.isArray(track.singer) ? track.singer.map((s) => s.name).join(", ") : track.singer) : base.artist,
+      album: track.album || base.album,
+      artwork: track.artwork || base.artwork,
+      duration: track.duration || base.duration,
+    };
+  },
+
+  // 播放时按 mid 从 QQ 拉取歌词（legacy 接口 + base64 解码，返回明文 LRC）
+  async getLyric(musicItem) {
+    try {
+      const mid = musicItem.mid || musicItem.songmid || musicItem.id;
+      if (!mid) return null;
+      const url = \`https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=\${mid}&pcachetime=\${Date.now()}\`;
+      const res = await axios.get(url, { headers: { Referer: "https://y.qq.com", "user-agent": "Mozilla/5.0" } });
+      const text = String(res.data || "");
+      // 去掉 JSONP 包裹（如 MusicJsonCallback(...) / jsonCallback(...)）
+      const inner = text.replace(/^[^(]*\\(/, "").replace(/\\)\\s*$/, "").trim();
+      const json = JSON.parse(inner);
+      const b64 = json && json.lyric;
+      if (!b64) return null;
+      const buf = Buffer.from(b64, "base64");
+      const rawLrc = buf.toString("utf-8");
+      if (!rawLrc) return null;
+      const result = { rawLrc };
+      if (json.trans) {
+        // trans 也是 base64
+        try { result.translation = Buffer.from(json.trans, "base64").toString("utf-8"); } catch (_) {}
+      }
+      return result;
+    } catch (_) { return null; }
   },
 };
 
@@ -158,6 +198,28 @@ function buildSheet() {
     isImported: true,
     musicList,
   };
+}
+
+// 用 QQ mid 反查歌曲真实信息（songID / 歌名 / 歌手 / 封面）。
+async function fetchTrackByMid(mid) {
+  try {
+    const data = {
+      comm: { ct: "19", cv: "1859", uin: "0" },
+      req: { module: "music.trackInfo.UniformRuleCtrl", method: "CgiGetTrackInfo",
+        param: { types: [1], ids: [], mids: [mid], ctx: 0 } },
+    };
+    const res = await axios.get("https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&data=" + encodeURIComponent(JSON.stringify(data)), {
+      headers: { "User-Agent": "Mozilla/5.0", Referer: "https://y.qq.com" },
+    });
+    const t = res.data?.req?.data?.tracks?.[0];
+    if (!t) return null;
+    const album = t.album || {};
+    const singers = (t.singer || []).map((s) => ({ name: s.name, mid: s.mid }));
+    const artwork = album.pmid
+      ? \`https://y.gtimg.cn/music/photo_new/T002R300x300M000\${album.pmid}.jpg\`
+      : (album.mid ? \`https://y.gtimg.cn/music/photo_new/T002R300x300M000\${album.mid}.jpg\` : "");
+    return { songid: t.id, name: t.name, singer: singers, album: album.name, artwork, duration: t.interval };
+  } catch (_) { return null; }
 }
 `;
 }
