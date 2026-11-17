@@ -160,6 +160,30 @@ baka-playlist-gen/
 - 保持零运行时依赖（CSV 路径）或仅在说明中可选引入
 - 不引入固定歌曲数据
 
+## 🛠️ 开发与维护
+
+### 模块职责
+| 文件 | 职责 |
+|---|---|
+| `src/cli.mjs` | 命令行入口，串联 解析→匹配→分组→生成 |
+| `src/excel-parser.mjs` | CSV / XLSX 解析（含编码、分隔符、表头、起始行） |
+| `src/matcher.mjs` | QQ 搜索 + mid 严格二次校验（杜绝"歌名≠歌曲"错配） |
+| `src/language-detect.mjs` | 语言分组（中/日/英/韩/其他，可配置） |
+| `src/player-provider.mjs` | 播放多源回退设计（供插件内嵌） |
+| `src/plugin-gen.mjs` | 生成 BakaMusic 插件（含封面/歌词动态获取） |
+
+### 常用命令
+```bash
+npm test          # 运行单元测试
+node src/cli.mjs list.csv --out dist   # 完整流程
+node scripts/regen-from-matches.mjs matches.json dist  # 从已匹配数据重建插件
+```
+
+### 关于封面与歌词
+封面(`getMusicInfo` 的 artwork) 与歌词(`getLyric`) 是**播放时从 QQ 动态获取**的，
+不是写死在歌单数据里。`getLyric` 走 QQ legacy 歌词接口 + base64 解码返回明文 LRC。
+如需更换歌词/封面来源，修改 `src/plugin-gen.mjs` 中相关实现即可。
+
 ## 📄 License
 
 [MIT](LICENSE)
