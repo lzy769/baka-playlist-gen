@@ -44,8 +44,15 @@ export function renderPlugin(cfg) {
   const version = override.version || "1.0.0";
   const description = override.description || `${lang}歌曲，共 ${songs.length} 首`;
 
-  // 歌曲数据内嵌为 JSON 数组
-  const songsJson = JSON.stringify(songs.map((s) => ({ mid: s.mid, title: s.title, artist: s.artist })));
+  // 歌曲数据内嵌为 JSON 数组（artwork 若已预取则一并写入，列表可直接显示封面）
+  const songsJson = JSON.stringify(
+    songs.map((s) => {
+      const item = { mid: s.mid, title: s.title, artist: s.artist };
+      if (s.artwork) item.artwork = s.artwork;
+      if (s.album) item.album = s.album;
+      return item;
+    }),
+  );
 
   return `"use strict";
 /* eslint-disable */
@@ -90,12 +97,15 @@ async function resolvePlayerSource(songMid, quality) {
 
 function toMediaItem(song) {
   const mid = String(song.mid || song.songmid || song.id || "");
-  return {
+  const item = {
     id: mid, mid: mid, songmid: mid,
     platform: ${JSON.stringify(platform)},
     title: song.title || "", artist: song.artist || "",
-    album: "", duration: 0, qualities: {},
+    album: song.album || "", duration: 0, qualities: {},
   };
+  // 预取过封面时直接带上，列表无需点击即可显示专辑图
+  if (song.artwork) item.artwork = song.artwork;
+  return item;
 }
 
 module.exports = {
@@ -230,6 +240,74 @@ async function fetchTrackByMid(mid) {
  * @param {object} [opts] { outDir, langMeta, trigger }
  * @returns {string[]} 生成的插件文件路径
  */
+/**
+ * 批量预取封面（QQ CgiGetTrackInfo，一次最多 100 首）。
+ *
+ * 关键点：批量请求时 `types` 数组长度必须与 `mids` 一致，否则接口返回空数组。
+ * 返回 Map<mid, { artwork, album, artist }>，查不到的 mid 不在 Map 中。
+ *
+ * @param {string[]} mids
+ * @param {object} [opts] { batchSize, intervalMs, onProgress }
+ * @returns {Promise<Map<string, {artwork?:string, album?:string, name?:string}>>}
+ */
+export async function prefetchCovers(mids, opts = {}) {
+  const batchSize = opts.batchSize ?? 100;
+  const intervalMs = opts.intervalMs ?? 120;
+  const list = [...new Set((mids || []).filter(Boolean))];
+  const result = new Map();
+
+  for (let i = 0; i < list.length; i += batchSize) {
+    const batch = list.slice(i, i + batchSize);
+    const payload = {
+      comm: { ct: "19", cv: "1859", uin: "0" },
+      req: {
+        module: "music.trackInfo.UniformRuleCtrl",
+        method: "CgiGetTrackInfo",
+        // types 必须与 mids 等长，否则接口不返回数据
+        param: { types: batch.map(() => 1), ids: [], mids: batch, ctx: 0 },
+      },
+    };
+    try {
+      const res = await fetch(
+        "https://u.y.qq.com/cgi-bin/musicu.fcg?format=json&data=" + encodeURIComponent(JSON.stringify(payload)),
+        { headers: { "User-Agent": "Mozilla/5.0", Referer: "https://y.qq.com" } },
+      );
+      const json = await res.json();
+      for (const t of json.req?.data?.tracks || []) {
+        const album = t.album || {};
+        const pmid = album.pmid || album.mid;
+        const entry = { album: album.name || "" };
+        if (pmid) entry.artwork = `https://y.gtimg.cn/music/photo_new/T002R300x300M000${pmid}.jpg`;
+        const singer = (t.singer || []).map((s) => s.name).filter(Boolean).join("/");
+        if (singer) entry.artist = singer;
+        if (t.mid) result.set(t.mid, entry);
+      }
+    } catch {
+      // 该批失败不影响整体，后续歌曲仍会有动态封面兜底
+    }
+    if (opts.onProgress) opts.onProgress({ done: Math.min(i + batchSize, list.length), total: list.length });
+    if (i + batchSize < list.length) await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return result;
+}
+
+/**
+ * 给分组数据补上封面（原地返回新对象，不修改入参）。
+ * @param {Record<string, Array<{mid,title,artist}>>} groups
+ * @param {Map} covers prefetchCovers 的返回值
+ */
+export function attachCovers(groups, covers) {
+  const out = {};
+  for (const [lang, songs] of Object.entries(groups)) {
+    out[lang] = (songs || []).map((s) => {
+      const c = covers.get(s.mid);
+      if (!c) return s;
+      return { ...s, artwork: c.artwork, album: c.album || s.album };
+    });
+  }
+  return out;
+}
+
 export function generatePlugins(groups, opts = {}) {
   const outDir = opts.outDir || path.join(ROOT, "dist");
   const trigger = opts.trigger || "local://import";

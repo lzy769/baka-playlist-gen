@@ -24,10 +24,10 @@ import path from "node:path";
 import { parseSongList } from "./excel-parser.mjs";
 import { matchSongs } from "./matcher.mjs";
 import { groupByLanguage, LANGS } from "./language-detect.mjs";
-import { generatePlugins } from "./plugin-gen.mjs";
+import { generatePlugins, prefetchCovers, attachCovers } from "./plugin-gen.mjs";
 
 function parseArgs(argv) {
-  const args = { input: null, langs: null, out: "dist", concurrency: 3, interval: 120, justGroup: false, sheetPrefix: null, resume: null, saveState: null, delimiter: null, startRow: 0, noHeader: false };
+  const args = { input: null, langs: null, out: "dist", concurrency: 3, interval: 120, justGroup: false, sheetPrefix: null, resume: null, saveState: null, delimiter: null, startRow: 0, noHeader: false, withCovers: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--help" || a === "-h") { args.help = true; continue; }
@@ -42,6 +42,7 @@ function parseArgs(argv) {
     if (a === "--delimiter") { args.delimiter = argv[i + 1]; i += 1; continue; }
     if (a === "--start-row") { args.startRow = parseInt(argv[i + 1], 10) || 0; i += 1; continue; }
     if (a === "--no-header") { args.noHeader = true; continue; }
+    if (a === "--with-covers") { args.withCovers = true; continue; }
     if (!a.startsWith("-") && !args.input) args.input = a;
   }
   return args;
@@ -64,6 +65,7 @@ function printHelp() {
   --delimiter <c>       CSV 分隔符(默认自动: 制表符>逗号)
   --start-row <n>       从第 n 行开始解析(0-based)
   --no-header           不自动跳过表头行
+  --with-covers         预取封面写入插件(列表不点进去就显示专辑图)
   --just-group          仅语言分组(不联网)
   -h, --help            帮助
 `);
@@ -142,11 +144,22 @@ async function main() {
     }
   }
 
-  // 3) 生成插件
+  // 3) 生成插件（可选：预取封面，让列表不点进去也能显示专辑图）
   mkdirSync(args.out, { recursive: true });
+  let finalGroups = groups;
+  if (args.withCovers) {
+    const allMids = Object.values(groups).flat().map((s) => s.mid).filter(Boolean);
+    console.log(`🖼  预取封面（${allMids.length} 首）...`);
+    const covers = await prefetchCovers(allMids, {
+      onProgress: ({ done, total }) => process.stdout.write(`\r   封面进度 ${done}/${total}`),
+    });
+    process.stdout.write("\n");
+    console.log(`   ✓ 拿到 ${covers.size} 张封面`);
+    finalGroups = attachCovers(groups, covers);
+  }
   const sheetTitleFor = (lang, count) =>
     args.sheetPrefix ? `${args.sheetPrefix}${lang}${count}首` : `${lang}歌单${count}首`;
-  const files = generatePlugins(groups, { outDir: args.out, sheetTitleFor });
+  const files = generatePlugins(finalGroups, { outDir: args.out, sheetTitleFor });
 
   if (files.length) {
     console.log(`\n✅ 已生成 ${files.length} 个歌单插件，输出到: ${args.out}`);

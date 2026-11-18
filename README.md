@@ -18,6 +18,7 @@
 - **严格歌曲匹配**：搜索 QQ 音乐并**二次校验 mid 对应的真实歌名/歌手**，杜绝「歌名和歌曲不对版」
 - **多源播放回退**：生成的插件播放走**多源按序回退**（单个解析源失效自动换源），更稳
 - **自动匹配封面与歌词**：播放时自动从 QQ 拉取**封面(artwork)**和**歌词(LRC)**，歌单点开即有图有词
+- **列表直接显示封面**：加 `--with-covers` 会在生成时批量预取封面写进插件，**歌单列表不点进去就能看到专辑图**（实测覆盖率约 97%）
 - **可断点续跑**：大批量匹配中断后，用 `--resume` 从上次进度继续
 - **未匹配报告**：匹配不上的歌会输出 `unmatched.txt`，方便手动补齐
 - **完整插件生成**：每个语言生成一个 BakaMusic 插件，放进插件目录即可在「推荐歌单」里点开播放
@@ -90,6 +91,7 @@ node src/cli.mjs <input.csv|xlsx> [options]
   --delimiter <c>    指定 CSV 分隔符（默认自动：制表符 > 逗号）
   --start-row <n>    从第 n 行开始解析（0-based）
   --no-header        不自动跳过表头行
+  --with-covers      预取封面写入插件（列表不点进去就显示专辑图）
   --just-group       仅语言分组（不联网匹配）
   -h, --help         帮助
 ```
@@ -180,9 +182,21 @@ node scripts/regen-from-matches.mjs matches.json dist  # 从已匹配数据重�
 ```
 
 ### 关于封面与歌词
-封面(`getMusicInfo` 的 artwork) 与歌词(`getLyric`) 是**播放时从 QQ 动态获取**的，
-不是写死在歌单数据里。`getLyric` 走 QQ legacy 歌词接口 + base64 解码返回明文 LRC。
-如需更换歌词/封面来源，修改 `src/plugin-gen.mjs` 中相关实现即可。
+
+封面有两条路径，可以同时生效：
+
+1. **列表显示（离线嵌入）**：加 `--with-covers` 后，生成阶段会调 `prefetchCovers()`
+   批量查询每首歌的专辑封面 URL，写进插件内嵌的 `SONGS` 数据里（`artwork` / `album` 字段）。
+   这样**不点进歌单也能看到专辑图**。批量查一次 100 首，约 97% 的歌能取到封面。
+2. **播放时兜底（动态获取）**：`getMusicInfo` 会在播放时按 mid 再查一次 QQ，
+   补充真实歌名/歌手/专辑/封面，覆盖预取时漏掉的歌。
+
+歌词走 `getLyric`：QQ legacy 歌词接口 + 去掉 JSONP 包裹 + base64 解码，返回明文 LRC。
+
+> 批量查询注意：`CgiGetTrackInfo` 的 `types` 数组长度必须与 `mids` 一致，
+> 否则接口返回空数组（这是踩过的坑）。
+
+如需更换歌词/封面来源，修改 `src/plugin-gen.mjs` 中 `prefetchCovers` / `getLyric` 即可。
 
 ## 📄 License
 
