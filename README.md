@@ -92,6 +92,11 @@ node src/cli.mjs <input.csv|xlsx> [options]
   --start-row <n>    从第 n 行开始解析（0-based）
   --no-header        不自动跳过表头行
   --with-covers      预取封面写入插件（列表不点进去就显示专辑图）
+  --cover <文件|URL>  自定义歌单封面（推荐歌单卡片显示），可多次使用：
+                       --cover 中文=./imgs/zh.png   仅该语言
+                       --cover ./cover.png          应用到所有歌单
+                      本地图片自动转 data:URL 内嵌，也可直接填图片 URL
+                      （不指定则自动取歌单里第一首有封面的歌）
   --just-group       仅语言分组（不联网匹配）
   -h, --help         帮助
 ```
@@ -114,6 +119,12 @@ node src/cli.mjs list.csv --resume state.json
 
 # 自定义 CSV：制表符分隔、从第 3 行开始
 node src/cli.mjs list.tsv --delimiter "	" --start-row 2
+
+# 自定义歌单封面：所有歌单用同一张图（本地图片自动内嵌为 data URL）
+node src/cli.mjs list.csv --cover ./imgs/my-music.png
+
+# 按语言分别设置封面
+node src/cli.mjs list.csv --cover 中文=./imgs/zh.png --cover 日文=./imgs/jp.jpg --cover 英文=https://example.com/en.png
 ```
 
 ## 🔧 工作原理

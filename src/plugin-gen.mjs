@@ -25,6 +25,7 @@ const ROOT = path.resolve(__dirname, "..");
  * @param {string} cfg.lang          语言名，如 "中文"
  * @param {string} cfg.sheetId       歌单 id（默认 local-<lang>）
  * @param {string} cfg.sheetTitle    歌单标题，如 "中文歌单394首"
+ * @param {string} [cfg.cover]       歌单封面：图片 URL 或 data: URL（在"推荐歌单"卡片显示）
  * @param {Array<{mid:string,title:string,artist:string}>} cfg.songs
  * @param {object} [cfg.override]    透传给插件的元数据覆盖（如 platform/author/version）
  * @returns {string} 插件源码
@@ -34,6 +35,7 @@ export function renderPlugin(cfg) {
     lang,
     sheetId = `local-${lang}`,
     sheetTitle,
+    cover,
     songs,
     trigger = "local://import",
     override = {},
@@ -43,6 +45,8 @@ export function renderPlugin(cfg) {
   const author = override.author || "baka-playlist-gen";
   const version = override.version || "1.0.0";
   const description = override.description || `${lang}歌曲，共 ${songs.length} 首`;
+
+  const coverJson = JSON.stringify(cover || "");
 
   // 歌曲数据内嵌为 JSON 数组（artwork 若已预取则一并写入，列表可直接显示封面）
   const songsJson = JSON.stringify(
@@ -64,6 +68,9 @@ const axios = axiosModule.default || axiosModule;
 
 /** 内嵌歌曲数据（mid ↔ 歌名/歌手已严格校验） */
 const SONGS = ${songsJson};
+
+/** 歌单封面（"推荐歌单"卡片展示），可为图片 URL 或 data: URL，留空则自动取歌单里第一首有封面的歌 */
+const SHEET_COVER = ${coverJson};
 
 /** 播放解析（多源按序回退，见 src/player-provider.mjs 的设计） */
 async function resolvePlayerSource(songMid, quality) {
@@ -138,7 +145,7 @@ module.exports = {
   async getMusicSheetInfo(sheetItem, page) {
     if (sheetItem && String(sheetItem.id || "").includes(${JSON.stringify(sheetId)})) {
       const sheet = buildSheet();
-      return { isEnd: true, sheetItem: { id: ${JSON.stringify(sheetId)}, title: sheet.title, artist: sheet.artist, worksNum: sheet.musicList.length }, musicList: sheet.musicList };
+      return { isEnd: true, sheetItem: { id: ${JSON.stringify(sheetId)}, title: sheet.title, artist: sheet.artist, artwork: sheet.artwork, worksNum: sheet.musicList.length }, musicList: sheet.musicList };
     }
     return { isEnd: true, musicList: [] };
   },
@@ -198,12 +205,19 @@ module.exports = {
 
 function buildSheet() {
   const musicList = SONGS.map(toMediaItem);
+  // 封面：自定义 SHEET_COVER 优先，否则取歌单里第一首有 artwork 的歌曲封面
+  let artwork = SHEET_COVER;
+  if (!artwork) {
+    const withCover = musicList.find((m) => m.artwork);
+    if (withCover && withCover.artwork) artwork = withCover.artwork;
+  }
   return {
     id: ${JSON.stringify(sheetId)},
     platform: ${JSON.stringify(platform)},
     title: ${JSON.stringify(sheetTitle)},
     artist: "本地导入",
     description: ${JSON.stringify(description)},
+    artwork,
     worksNum: musicList.length,
     isImported: true,
     musicList,
@@ -317,11 +331,16 @@ export function generatePlugins(groups, opts = {}) {
     const sheetTitle = opts.sheetTitleFor
       ? opts.sheetTitleFor(lang, songs.length)
       : `${lang}歌单${songs.length}首`;
+    // 支持自定义歌单封面：coverFor(lang, songs.length) 返回封面 URL/dataURL，也可为整体 opts.cover 固定封面
+    const cover = typeof opts.coverFor === "function"
+      ? opts.coverFor(lang, songs.length)
+      : (opts.cover || "");
     const code = renderPlugin({
       lang,
       sheetId: `local-${lang}`,
       sheetTitle,
       songs,
+      cover,
       trigger,
     });
     const file = path.join(outDir, `local-playlist-${lang}.js`);

@@ -21,17 +21,68 @@
 
 import { writeFileSync, readFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseSongList } from "./excel-parser.mjs";
 import { matchSongs } from "./matcher.mjs";
 import { groupByLanguage, LANGS } from "./language-detect.mjs";
 import { generatePlugins, prefetchCovers, attachCovers } from "./plugin-gen.mjs";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * 把 --cover 的值解析成「语言 → 封面」映射。
+ * 支持两种写法的多次使用：
+ *   --cover <文件|URL>             应用到所有生成的歌单
+ *   --cover 中文=./imgs/zh.png    仅应用到指定语言
+ * 本地文件会被读取并转成 data: URL（小图可直接内嵌进插件）。
+ * @param {string[]} coverArgs
+ * @returns {Promise<{all: string, byLang: Record<string,string>}>}
+ */
+async function resolveCovers(coverArgs) {
+  const all = [];
+  const byLang = {};
+  for (const raw of (coverArgs || []).filter(Boolean)) {
+    const eq = raw.indexOf("=");
+    let lang = null;
+    let val = raw;
+    if (eq > 0 && eq < raw.length - 1 && !/^[a-z][a-z0-9+\-.]*:\/\//i.test(raw)) {
+      const maybe = raw.slice(0, eq);
+      if (LANGS.includes(maybe)) { lang = maybe; val = raw.slice(eq + 1); }
+    }
+    const resolved = await toCoverDataUrl(val);
+    if (lang) byLang[lang] = resolved;
+    else all.push(resolved);
+  }
+  const pick = (lang) => byLang[lang] || (byLang[lang] === "" ? "" : (all[0] || ""));
+  return { all: all[0] || "", byLang, pick };
+}
+
+/** 把封面值转成可用于渲染的字符串：URL 原样，本地文件转 data URL。 */
+async function toCoverDataUrl(val) {
+  const v = String(val || "").trim();
+  if (!v) return "";
+  if (/^[a-z][a-z0-9+\-.]*:\/\//i.test(v) || /^data:image\//i.test(v)) {
+    return v; // http(s) / data / 其他协议 URL
+  }
+  const abs = path.isAbsolute(v) ? v : path.resolve(__dirname, "..", v);
+  try {
+    const data = readFileSync(abs);
+    const ext = path.extname(abs).toLowerCase().replace(".", "");
+    const mime = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp" }[ext] || "image/png";
+    return `data:${mime};base64,${data.toString("base64")}`;
+  } catch (e) {
+    throw new Error(`无法读取封面文件 "${v}" (${abs}): ${e.message}`);
+  }
+}
+
 function parseArgs(argv) {
-  const args = { input: null, langs: null, out: "dist", concurrency: 3, interval: 120, justGroup: false, sheetPrefix: null, resume: null, saveState: null, delimiter: null, startRow: 0, noHeader: false, withCovers: false };
+  const args = { input: null, langs: null, out: "dist", concurrency: 3, interval: 120, justGroup: false, sheetPrefix: null, resume: null, saveState: null, delimiter: null, startRow: 0, noHeader: false, withCovers: false, covers: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--help" || a === "-h") { args.help = true; continue; }
     if (a === "--just-group") { args.justGroup = true; continue; }
+    if (a === "--with-covers") { args.withCovers = true; continue; }
+    if (a === "--cover") { args.covers.push(argv[i + 1]); i += 1; continue; }
     if (a === "--langs") { args.langs = (argv[i + 1] || "").split(",").map((s) => s.trim()).filter(Boolean); i += 1; continue; }
     if (a === "--out") { args.out = argv[i + 1]; i += 1; continue; }
     if (a === "--concurrency") { args.concurrency = parseInt(argv[i + 1], 10) || 3; i += 1; continue; }
@@ -66,6 +117,10 @@ function printHelp() {
   --start-row <n>       从第 n 行开始解析(0-based)
   --no-header           不自动跳过表头行
   --with-covers         预取封面写入插件(列表不点进去就显示专辑图)
+  --cover <文件|URL>    自定义歌单封面。可多次使用:
+                          --cover 中文=./imgs/zh.png  仅该语言
+                          --cover ./cover.png          应用到所有歌单
+                        本地图片自动转 data:URL 内嵌；也可直接填图片URL
   --just-group          仅语言分组(不联网)
   -h, --help            帮助
 `);
@@ -159,7 +214,21 @@ async function main() {
   }
   const sheetTitleFor = (lang, count) =>
     args.sheetPrefix ? `${args.sheetPrefix}${lang}${count}首` : `${lang}歌单${count}首`;
-  const files = generatePlugins(finalGroups, { outDir: args.out, sheetTitleFor });
+
+  // 解析自定义封面（本地图片转 data URL / 直接使用图片 URL）
+  let coverMapping = null;
+  if (args.covers && args.covers.length) {
+    coverMapping = await resolveCovers(args.covers);
+    if (coverMapping.all) console.log(`🖼  自定义歌单封面已加载（${coverMapping.all.startsWith("data:") ? "data URL 内嵌" : coverMapping.all}）`);
+    const langs = Object.keys(coverMapping.byLang);
+    if (langs.length) console.log(`🖼  语言专属封面：${langs.join("、")}`);
+  }
+
+  const files = generatePlugins(finalGroups, {
+    outDir: args.out,
+    sheetTitleFor,
+    coverFor: coverMapping ? (lang, count) => coverMapping.pick(lang) : undefined,
+  });
 
   if (files.length) {
     console.log(`\n✅ 已生成 ${files.length} 个歌单插件，输出到: ${args.out}`);
