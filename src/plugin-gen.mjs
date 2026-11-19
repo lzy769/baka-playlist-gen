@@ -177,11 +177,68 @@ module.exports = {
     };
   },
 
-  // 播放时按 mid 从 QQ 拉取歌词（legacy 接口 + base64 解码，返回明文 LRC）
+  // 播放时按 mid 从 QQ 拉取歌词（新接口优先，带翻译；失败回退 legacy 接口）
   async getLyric(musicItem) {
+    // 新接口字段可能是 base64（crypt=0），也可能是明文
+    const decodeField = (field) => {
+      if (!field || typeof field !== "string") return "";
+      const value = field.trim();
+      if (!value) return "";
+      const compact = value.replace(/\\s/g, "");
+      if (/^[A-Za-z0-9+/=]+$/.test(compact) && compact.length % 4 === 0) {
+        try {
+          const decoded = Buffer.from(compact, "base64").toString("utf-8");
+          if (decoded && /\\[(ti|ar|al|by|offset|\\d{1,2}:\\d{2})/.test(decoded)) return decoded;
+        } catch (_) {}
+      }
+      return field;
+    };
+    const fetchRich = async (songmid) => {
+      const payload = {
+        comm: { ct: "19", cv: "1859", uin: "0" },
+        req: {
+          method: "GetPlayLyricInfo",
+          module: "music.musichallSong.PlayLyricInfo",
+          param: {
+            format: "json", crypt: 0, qrc: 0, qrc_t: 0, roma: 0, roma_t: 0,
+            trans: 1, trans_t: 0, songmid: String(songmid), type: -1,
+          },
+        },
+      };
+      const res = await axios.post("https://u.y.qq.com/cgi-bin/musicu.fcg", payload, {
+        headers: {
+          "Content-Type": "application/json",
+          referer: "https://y.qq.com",
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36",
+        },
+        timeout: 10000,
+      });
+      const data = res && res.data && res.data.req && res.data.req.data;
+      if (!data) return null;
+      const rawLrc = decodeField(data.lyric);
+      if (!rawLrc) return null;
+      // 去掉翻译流里的元信息（如 [kana:...]），未翻译的 "//" 行保留时间轴、清空文本
+      const translation = decodeField(data.trans)
+        .split(/\\r?\\n/)
+        .filter((line) => !/^\\s*\\[(kana|ti|ar|al|by|offset):/i.test(line))
+        .map((line) => line.replace(/^(\\[\\d{1,2}:\\d{2}(?:\\.\\d{1,3})?\\])\\s*\\/\\/\\s*$/, "$1"))
+        .join("\\n")
+        .trim();
+      return { rawLrc, translation };
+    };
     try {
       const mid = musicItem.mid || musicItem.songmid || musicItem.id;
       if (!mid) return null;
+      // 1) 新接口：同时返回原文与翻译
+      try {
+        const rich = await fetchRich(mid);
+        if (rich && rich.rawLrc) {
+          const result = { rawLrc: rich.rawLrc };
+          if (rich.translation) result.translation = rich.translation;
+          return result;
+        }
+      } catch (_) { /* 新接口失败，继续回退 */ }
+      // 2) 回退 legacy 接口（仅原文）
       const url = \`https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=\${mid}&pcachetime=\${Date.now()}\`;
       const res = await axios.get(url, { headers: { Referer: "https://y.qq.com", "user-agent": "Mozilla/5.0" } });
       const text = String(res.data || "");
@@ -190,15 +247,9 @@ module.exports = {
       const json = JSON.parse(inner);
       const b64 = json && json.lyric;
       if (!b64) return null;
-      const buf = Buffer.from(b64, "base64");
-      const rawLrc = buf.toString("utf-8");
+      const rawLrc = Buffer.from(b64, "base64").toString("utf-8");
       if (!rawLrc) return null;
-      const result = { rawLrc };
-      if (json.trans) {
-        // trans 也是 base64
-        try { result.translation = Buffer.from(json.trans, "base64").toString("utf-8"); } catch (_) {}
-      }
-      return result;
+      return { rawLrc };
     } catch (_) { return null; }
   },
 };

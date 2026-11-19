@@ -202,7 +202,16 @@ node scripts/regen-from-matches.mjs matches.json dist  # 从已匹配数据重�
 2. **播放时兜底（动态获取）**：`getMusicInfo` 会在播放时按 mid 再查一次 QQ，
    补充真实歌名/歌手/专辑/封面，覆盖预取时漏掉的歌。
 
-歌词走 `getLyric`：QQ legacy 歌词接口 + 去掉 JSONP 包裹 + base64 解码，返回明文 LRC。
+歌词走 `getLyric`，**优先取带翻译的歌词**：
+
+- **主路径**：QQ 新接口 `music.musichallSong.PlayLyricInfo`（`GetPlayLyricInfo`，
+  `crypt=0`），同一次请求同时返回原文 `lyric` 与翻译 `trans`（base64 明文 LRC）。
+  日文/英文歌单因此能在播放器里显示中文翻译。
+- **兜底**：新接口失败时回退 legacy 接口 `fcg_query_lyric_new.fcg`（去 JSONP + base64 解码），
+  保证原文歌词仍然可用。
+- 翻译流会去掉 `[kana:...]` 等元信息；未翻译的 `//` 行保留时间轴、清空文本。
+
+> 注意：中文歌在 QQ 侧本身没有翻译数据，开启翻译也只会显示原文，这是数据源限制。
 
 > 批量查询注意：`CgiGetTrackInfo` 的 `types` 数组长度必须与 `mids` 一致，
 > 否则接口返回空数组（这是踩过的坑）。
